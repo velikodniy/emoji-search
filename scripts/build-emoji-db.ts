@@ -5,8 +5,9 @@
 
 import { pipeline } from "@huggingface/transformers";
 import { encode } from "cbor-x";
+// @ts-ignore: Import attribute for JSON
+import emojiData from "npm:emoji-datasource/emoji.json" with { type: "json" };
 
-const EMOJI_DATA_PATH = "./node_modules/emoji-datasource/emoji.json";
 const OUTPUT_PATH = "./public/emoji-db.cbor";
 
 interface RawEmoji {
@@ -68,9 +69,7 @@ function quantizeEmbeddingsSymmetric(embeddings: Float32Array[]): Int8Array {
 
 async function main() {
   console.log("Loading emoji data...");
-  const rawData = JSON.parse(
-    await Deno.readTextFile(EMOJI_DATA_PATH),
-  ) as RawEmoji[];
+  const rawData = emojiData as RawEmoji[];
 
   // Filter and dedupe emojis
   const emojis = rawData.filter((e) => !e.obsoleted_by && e.has_img_apple);
