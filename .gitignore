@@ -1,0 +1,8 @@
+# macOS
+.DS_Store
+
+# TypeScript / Node
+node_modules/
+dist/
+*.tsbuildinfo
+.env
