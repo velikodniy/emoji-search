@@ -1,0 +1,21 @@
+{
+  "tasks": {
+    "download-model": "deno run -A scripts/download-model.ts",
+    "build-db": "deno run -A scripts/build-emoji-db.ts",
+    "dev": "./node_modules/.bin/rsbuild dev",
+    "build": "deno task download-model && deno task build-db && ./node_modules/.bin/rsbuild build",
+    "preview": "./node_modules/.bin/rsbuild preview"
+  },
+  "nodeModulesDir": "auto",
+  "imports": {
+    "svelte": "npm:svelte@^5.0.0",
+    "@huggingface/transformers": "npm:@huggingface/transformers@^3.4.0",
+    "cbor-x": "npm:cbor-x@^1.6.0"
+  },
+  "devImports": {
+    "@rsbuild/core": "npm:@rsbuild/core@^1.2.0",
+    "@rsbuild/plugin-svelte": "npm:@rsbuild/plugin-svelte@^1.0.12",
+    "emoji-datasource": "npm:emoji-datasource@^16.0.0",
+    "typescript": "npm:typescript@^5.0.0"
+  }
+}
