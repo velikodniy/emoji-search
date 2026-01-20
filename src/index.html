@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>Emoji Search</title>
+        <script>
+            // Apply theme before render to prevent flash
+            (function () {
+                const stored = localStorage.getItem("theme");
+                const prefersDark = matchMedia(
+                    "(prefers-color-scheme: dark)",
+                ).matches;
+                const theme = stored || (prefersDark ? "dark" : "light");
+                document.documentElement.dataset.theme = theme;
+            })();
+        </script>
+    </head>
+    <body>
+        <div id="app"></div>
+    </body>
+</html>
