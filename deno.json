@@ -2,9 +2,9 @@
   "tasks": {
     "download-model": "deno run -A scripts/download-model.ts",
     "build-db": "deno run -A scripts/build-emoji-db.ts",
-    "dev": "./node_modules/.bin/rsbuild dev",
-    "build": "deno task download-model && deno task build-db && ./node_modules/.bin/rsbuild build",
-    "preview": "./node_modules/.bin/rsbuild preview"
+    "dev": "deno run -A npm:@rsbuild/core/rsbuild dev",
+    "build": "deno task download-model && deno task build-db && deno run -A npm:@rsbuild/core/rsbuild build",
+    "preview": "deno run -A npm:@rsbuild/core/rsbuild preview"
   },
   "nodeModulesDir": "auto",
   "imports": {
