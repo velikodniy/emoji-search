@@ -14,6 +14,9 @@ interface RawEmoji {
   unified: string;
   short_name: string;
   name: string;
+  category: string;
+  subcategory: string;
+  short_names: string[];
   obsoleted_by?: string;
   has_img_apple: boolean;
 }
@@ -88,8 +91,18 @@ async function main() {
     // Use short_name as display name (replace underscores with spaces)
     const displayName = emoji.short_name.replace(/_/g, " ");
     names.push(displayName);
-    // For embedding, combine short_name and full name for better semantics
-    descriptions.push(`${displayName} ${emoji.name.toLowerCase()}`);
+
+    // For embedding, combine multiple fields for better semantics
+    const keywords = [
+      displayName,
+      emoji.name.toLowerCase(),
+      (emoji.category || "").toLowerCase(),
+      (emoji.subcategory || "").toLowerCase(),
+      ...emoji.short_names.map((s) => s.replace(/_/g, " ")),
+    ];
+    // Deduplicate
+    const uniqueKeywords = [...new Set(keywords)];
+    descriptions.push(uniqueKeywords.join(" "));
   }
 
   console.log("Loading embedding model...");
