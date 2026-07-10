@@ -1,7 +1,8 @@
 /**
  * Compute dot product between a float32 query and int8 quantized embeddings.
- * Since both are normalized and symmetrically quantized, the dot product
- * is proportional to cosine similarity - no dequantization needed.
+ * Since both are normalized and symmetrically quantized, the raw dot product
+ * is proportional to cosine similarity. Divide by the database quantization
+ * scale when calibrated cosine-like scores are needed.
  */
 export function dotProductQuantized(
   query: Float32Array,

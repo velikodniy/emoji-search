@@ -1,20 +1,29 @@
 /**
  * Build script that generates the emoji database with pre-computed embeddings.
- * Run with: deno task build:db
+ * Run with: deno run -A scripts/build-emoji-db.ts
  */
 
-import { embed } from "@ternlight/base";
+import { embed, engineInfo } from "@ternlight/base";
 import { encode } from "cbor-x";
+import type { EmojiDB } from "../src/lib/emoji-db-types.ts";
 // @ts-ignore: Import attribute for JSON
-import emojiData from "npm:emoji-datasource/emoji.json" with { type: "json" };
+import emojiData from "emoji-datasource/emoji.json" with { type: "json" };
 
 const OUTPUT_PATH = "./public/emoji-db.cbor";
 const EMOJIPEDIA_PATH = "./data/emojipedia.json";
+const CUSTOM_ALIASES_PATH = "./data/custom-emoji-aliases.json";
+const DB_SCHEMA_VERSION = 2;
+const MODEL_NAME = "@ternlight/base";
+const EMOJI_DATASOURCE = "emoji-datasource/emoji.json";
+const EMBEDDING_DIM = 384;
+const PROGRESS_INTERVAL = 100;
 
 interface EmojipediaEntry {
   emoji: string;
   description: string;
 }
+
+type CustomAliases = Record<string, string[]>;
 
 interface RawEmoji {
   unified: string;
@@ -25,14 +34,6 @@ interface RawEmoji {
   short_names: string[];
   obsoleted_by?: string;
   has_img_apple: boolean;
-}
-
-interface EmojiDB {
-  dim: number;
-  chars: string[];
-  codes: string[];
-  names: string[];
-  embeddings: Int8Array;
 }
 
 function unifiedToChar(unified: string): string {
@@ -52,14 +53,28 @@ function unifiedToCode(unified: string): string {
  * Symmetric quantization around 0 to int8 range (-127 to 127).
  * This allows dot product comparison without dequantization.
  */
-function quantizeEmbeddingsSymmetric(embeddings: Float32Array[]): Int8Array {
-  // Find global max absolute value
+function findMaxAbs(embeddingGroups: Float32Array[][]): number {
   let maxAbs = 0;
-  for (const emb of embeddings) {
-    for (const val of emb) {
-      const abs = Math.abs(val);
-      if (abs > maxAbs) maxAbs = abs;
+  for (const embeddings of embeddingGroups) {
+    for (const emb of embeddings) {
+      for (const val of emb) {
+        const abs = Math.abs(val);
+        if (abs > maxAbs) maxAbs = abs;
+      }
     }
+  }
+  return maxAbs;
+}
+
+function quantizeEmbeddingsSymmetric(
+  embeddings: Float32Array[],
+  maxAbs: number,
+): Int8Array {
+  if (embeddings.length === 0) {
+    return new Int8Array();
+  }
+  if (maxAbs === 0) {
+    throw new Error("Cannot quantize all-zero embeddings");
   }
 
   const scale = 127 / maxAbs;
@@ -74,6 +89,45 @@ function quantizeEmbeddingsSymmetric(embeddings: Float32Array[]): Int8Array {
   }
 
   return quantized;
+}
+
+function computeEmbeddings(texts: string[]): Float32Array[] {
+  const embeddings: Float32Array[] = [];
+
+  for (let i = 0; i < texts.length; i++) {
+    const embedding = embed(texts[i]);
+    if (embedding.length !== EMBEDDING_DIM) {
+      throw new Error(
+        `Unexpected embedding dimension: ${embedding.length} !== ${EMBEDDING_DIM}`,
+      );
+    }
+    embeddings.push(embedding);
+
+    const progress = i + 1;
+    if (progress % PROGRESS_INTERVAL === 0 || progress === texts.length) {
+      console.log(`  ${progress}/${texts.length} embeddings computed`);
+    }
+  }
+
+  return embeddings;
+}
+
+async function loadCustomAliases(): Promise<Map<string, string[]>> {
+  const map = new Map<string, string[]>();
+  try {
+    const content = await Deno.readTextFile(CUSTOM_ALIASES_PATH);
+    const aliases = JSON.parse(content) as CustomAliases;
+    for (const [emoji, terms] of Object.entries(aliases)) {
+      map.set(
+        emoji,
+        terms.map((term) => term.trim().toLowerCase()).filter(Boolean),
+      );
+    }
+    console.log(`Loaded custom aliases for ${map.size} emojis`);
+  } catch {
+    console.log("No custom aliases found");
+  }
+  return map;
 }
 
 async function loadEmojipediaDescriptions(): Promise<Map<string, string>> {
@@ -94,7 +148,10 @@ async function loadEmojipediaDescriptions(): Promise<Map<string, string>> {
 async function main() {
   console.log("Loading emoji data...");
   const rawData = emojiData as RawEmoji[];
-  const emojipedia = await loadEmojipediaDescriptions();
+  const [emojipedia, customAliases] = await Promise.all([
+    loadEmojipediaDescriptions(),
+    loadCustomAliases(),
+  ]);
 
   // Filter and dedupe emojis
   const emojis = rawData.filter((e) => !e.obsoleted_by && e.has_img_apple);
@@ -105,6 +162,7 @@ async function main() {
   const chars: string[] = [];
   const codes: string[] = [];
   const names: string[] = [];
+  const tags: string[] = [];
   const descriptions: string[] = [];
 
   let emojipediaHits = 0;
@@ -116,51 +174,88 @@ async function main() {
     const displayName = emoji.short_name.replace(/_/g, " ");
     names.push(displayName);
 
-    // Use Emojipedia description if available, otherwise fall back to keywords
+    const tagList = [
+      ...emoji.short_names.map((s) => s.replace(/_/g, " ")),
+      emoji.name.toLowerCase(),
+      (emoji.category || "").toLowerCase(),
+      (emoji.subcategory || "").toLowerCase(),
+      ...(customAliases.get(char) ?? []),
+    ].filter(Boolean);
+    const uniqueTags = [...new Set(tagList)];
+    const tagText = uniqueTags.join(" ");
+
+    // Use Emojipedia description if available, otherwise fall back to the
+    // official emoji name and taxonomy. Keep names/tags/descriptions separate
+    // so search can score each intent independently.
     const emojipediaDesc = emojipedia.get(char);
+    const descriptionText = emojipediaDesc ||
+      `${emoji.name.toLowerCase()} ${emoji.category || ""} ${
+        emoji.subcategory || ""
+      }`.trim().toLowerCase();
     if (emojipediaDesc) {
-      // Combine Emojipedia description with name for better matching
-      descriptions.push(`${displayName}: ${emojipediaDesc}`);
       emojipediaHits++;
-    } else {
-      // Fallback: combine multiple fields for semantics
-      const keywords = [
-        displayName,
-        emoji.name.toLowerCase(),
-        (emoji.category || "").toLowerCase(),
-        (emoji.subcategory || "").toLowerCase(),
-        ...emoji.short_names.map((s) => s.replace(/_/g, " ")),
-      ];
-      const uniqueKeywords = [...new Set(keywords)];
-      descriptions.push(uniqueKeywords.join(" "));
     }
+
+    tags.push(tagText);
+    descriptions.push(descriptionText);
   }
 
   console.log(
     `Using Emojipedia descriptions for ${emojipediaHits}/${emojis.length} emojis`,
   );
 
-  console.log("Computing embeddings with @ternlight/base...");
-  const allEmbeddings: Float32Array[] = [];
+  console.log("Computing name embeddings with @ternlight/base...");
+  const nameEmbeddings = computeEmbeddings(names);
 
-  for (let i = 0; i < descriptions.length; i++) {
-    allEmbeddings.push(embed(descriptions[i]));
+  console.log("Computing tag embeddings with @ternlight/base...");
+  const tagEmbeddings = computeEmbeddings(tags);
 
-    const progress = i + 1;
-    if (progress % 100 === 0 || progress === descriptions.length) {
-      console.log(`  ${progress}/${descriptions.length} embeddings computed`);
-    }
-  }
+  console.log("Computing description embeddings with @ternlight/base...");
+  const descriptionEmbeddings = computeEmbeddings(descriptions);
 
   console.log("Quantizing embeddings to int8 (symmetric)...");
-  const quantized = quantizeEmbeddingsSymmetric(allEmbeddings);
+  const maxAbs = findMaxAbs([
+    nameEmbeddings,
+    tagEmbeddings,
+    descriptionEmbeddings,
+  ]);
+
+  const quantizationScale = 127 / maxAbs;
 
   const db: EmojiDB = {
-    dim: 384,
+    metadata: {
+      schemaVersion: DB_SCHEMA_VERSION,
+      createdAt: new Date().toISOString(),
+      model: MODEL_NAME,
+      modelInfo: engineInfo(),
+      embeddingDim: EMBEDDING_DIM,
+      embeddingFields: ["name", "tags", "description"],
+      quantization: {
+        type: "symmetric-int8",
+        maxAbs,
+        scale: quantizationScale,
+      },
+      sources: {
+        emojiDatasource: EMOJI_DATASOURCE,
+        emojiCount: chars.length,
+        emojipediaPath: EMOJIPEDIA_PATH,
+        emojipediaDescriptions: emojipediaHits,
+        customAliasesPath: CUSTOM_ALIASES_PATH,
+        customAliasEmojis: customAliases.size,
+      },
+    },
+    dim: EMBEDDING_DIM,
     chars,
     codes,
     names,
-    embeddings: quantized,
+    tags,
+    descriptions,
+    nameEmbeddings: quantizeEmbeddingsSymmetric(nameEmbeddings, maxAbs),
+    tagEmbeddings: quantizeEmbeddingsSymmetric(tagEmbeddings, maxAbs),
+    descriptionEmbeddings: quantizeEmbeddingsSymmetric(
+      descriptionEmbeddings,
+      maxAbs,
+    ),
   };
 
   console.log("Encoding to CBOR...");
@@ -171,7 +266,7 @@ async function main() {
   const sizeMB = (encoded.length / 1024 / 1024).toFixed(2);
   console.log(`\nDatabase saved to ${OUTPUT_PATH}`);
   console.log(`  Emojis: ${chars.length}`);
-  console.log(`  Embedding dim: 384`);
+  console.log(`  Embedding dim: ${EMBEDDING_DIM}`);
   console.log(`  File size: ${sizeMB} MB`);
 }
 

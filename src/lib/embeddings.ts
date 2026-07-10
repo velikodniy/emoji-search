@@ -62,7 +62,7 @@ export function preloadModel(): void {
  * Compute embedding for a text query.
  * Returns a normalized 384-dimensional Float32Array.
  */
-export async function computeEmbedding(text: string): Promise<Float32Array> {
+export function computeEmbedding(text: string): Float32Array {
   if (!modelReady) {
     warmupModel();
   }

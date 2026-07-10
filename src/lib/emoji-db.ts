@@ -1,6 +1,7 @@
 import { decode } from "cbor-x";
-import { computeEmbedding } from "./embeddings";
-import { dotProductQuantized } from "./similarity";
+import { computeEmbedding } from "./embeddings.ts";
+import type { EmojiDB } from "./emoji-db-types.ts";
+import { normalizeQuery, rankEmojiDB, validateDB } from "./search-scoring.ts";
 
 export interface EmojiResult {
   char: string;
@@ -9,18 +10,12 @@ export interface EmojiResult {
   score: number;
 }
 
-interface EmojiDB {
-  dim: number;
-  chars: string[];
-  codes: string[];
-  names: string[];
-  embeddings: Int8Array;
-}
+const DB_PATH = "/emoji-db.cbor";
 
 let db: EmojiDB | null = null;
 let loadingPromise: Promise<EmojiDB> | null = null;
 
-async function loadDB(): Promise<EmojiDB> {
+function loadDB(): Promise<EmojiDB> {
   if (db) {
     return db;
   }
@@ -30,12 +25,20 @@ async function loadDB(): Promise<EmojiDB> {
   }
 
   loadingPromise = (async () => {
-    const response = await fetch("/emoji-db.cbor");
+    const response = await fetch(DB_PATH);
+    if (!response.ok) {
+      throw new Error(`Failed to load emoji database: ${response.status}`);
+    }
+
     const buffer = await response.arrayBuffer();
     const data = decode(new Uint8Array(buffer)) as EmojiDB;
+    validateDB(data);
     db = data;
     return data;
-  })();
+  })().catch((error) => {
+    loadingPromise = null;
+    throw error;
+  });
 
   return loadingPromise;
 }
@@ -48,32 +51,22 @@ export async function searchEmojis(
   query: string,
   topK: number = 10,
 ): Promise<EmojiResult[]> {
-  const [database, queryEmbedding] = await Promise.all([
-    loadDB(),
-    computeEmbedding(query),
-  ]);
-
-  const { dim, chars, codes, names, embeddings } = database;
-  const numEmojis = chars.length;
-
-  // Compute similarities (dot product is proportional to cosine similarity
-  // since embeddings are normalized and symmetrically quantized)
-  const scores: Array<{ index: number; score: number }> = [];
-
-  for (let i = 0; i < numEmojis; i++) {
-    const offset = i * dim;
-    const score = dotProductQuantized(queryEmbedding, embeddings, offset, dim);
-    scores.push({ index: i, score });
+  const normalizedQuery = normalizeQuery(query);
+  if (!normalizedQuery || topK <= 0) {
+    return [];
   }
 
-  // Sort by score descending
-  scores.sort((a, b) => b.score - a.score);
+  const [database, queryEmbedding] = await Promise.all([
+    loadDB(),
+    computeEmbedding(normalizedQuery),
+  ]);
 
-  // Return top K results
-  return scores.slice(0, topK).map(({ index, score }) => ({
-    char: chars[index],
-    code: codes[index],
-    name: names[index],
-    score,
-  }));
+  return rankEmojiDB(database, queryEmbedding, normalizedQuery, topK).map(
+    ({ index, score }) => ({
+      char: database.chars[index],
+      code: database.codes[index],
+      name: database.names[index],
+      score,
+    }),
+  );
 }
