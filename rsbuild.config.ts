@@ -14,6 +14,21 @@ export default defineConfig({
   output: {
     assetPrefix: "/",
   },
+  tools: {
+    rspack: {
+      experiments: {
+        asyncWebAssembly: true,
+      },
+      module: {
+        rules: [
+          {
+            test: /@ternlight[\\/]base[\\/]pkg-bundler[\\/].*\.js$/,
+            type: "javascript/esm",
+          },
+        ],
+      },
+    },
+  },
   server: {
     publicDir: {
       name: "public",

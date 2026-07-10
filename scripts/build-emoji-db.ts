@@ -3,12 +3,18 @@
  * Run with: deno task build:db
  */
 
-import { pipeline } from "@huggingface/transformers";
+import { embed } from "@ternlight/base";
 import { encode } from "cbor-x";
 // @ts-ignore: Import attribute for JSON
 import emojiData from "npm:emoji-datasource/emoji.json" with { type: "json" };
 
 const OUTPUT_PATH = "./public/emoji-db.cbor";
+const EMOJIPEDIA_PATH = "./data/emojipedia.json";
+
+interface EmojipediaEntry {
+  emoji: string;
+  description: string;
+}
 
 interface RawEmoji {
   unified: string;
@@ -70,9 +76,25 @@ function quantizeEmbeddingsSymmetric(embeddings: Float32Array[]): Int8Array {
   return quantized;
 }
 
+async function loadEmojipediaDescriptions(): Promise<Map<string, string>> {
+  const map = new Map<string, string>();
+  try {
+    const content = await Deno.readTextFile(EMOJIPEDIA_PATH);
+    const entries = JSON.parse(content) as EmojipediaEntry[];
+    for (const entry of entries) {
+      map.set(entry.emoji, entry.description);
+    }
+    console.log(`Loaded ${map.size} Emojipedia descriptions`);
+  } catch {
+    console.log("No Emojipedia data found, using fallback descriptions");
+  }
+  return map;
+}
+
 async function main() {
   console.log("Loading emoji data...");
   const rawData = emojiData as RawEmoji[];
+  const emojipedia = await loadEmojipediaDescriptions();
 
   // Filter and dedupe emojis
   const emojis = rawData.filter((e) => !e.obsoleted_by && e.has_img_apple);
@@ -85,48 +107,49 @@ async function main() {
   const names: string[] = [];
   const descriptions: string[] = [];
 
+  let emojipediaHits = 0;
   for (const emoji of emojis) {
-    chars.push(unifiedToChar(emoji.unified));
+    const char = unifiedToChar(emoji.unified);
+    chars.push(char);
     codes.push(unifiedToCode(emoji.unified));
     // Use short_name as display name (replace underscores with spaces)
     const displayName = emoji.short_name.replace(/_/g, " ");
     names.push(displayName);
 
-    // For embedding, combine multiple fields for better semantics
-    const keywords = [
-      displayName,
-      emoji.name.toLowerCase(),
-      (emoji.category || "").toLowerCase(),
-      (emoji.subcategory || "").toLowerCase(),
-      ...emoji.short_names.map((s) => s.replace(/_/g, " ")),
-    ];
-    // Deduplicate
-    const uniqueKeywords = [...new Set(keywords)];
-    descriptions.push(uniqueKeywords.join(" "));
+    // Use Emojipedia description if available, otherwise fall back to keywords
+    const emojipediaDesc = emojipedia.get(char);
+    if (emojipediaDesc) {
+      // Combine Emojipedia description with name for better matching
+      descriptions.push(`${displayName}: ${emojipediaDesc}`);
+      emojipediaHits++;
+    } else {
+      // Fallback: combine multiple fields for semantics
+      const keywords = [
+        displayName,
+        emoji.name.toLowerCase(),
+        (emoji.category || "").toLowerCase(),
+        (emoji.subcategory || "").toLowerCase(),
+        ...emoji.short_names.map((s) => s.replace(/_/g, " ")),
+      ];
+      const uniqueKeywords = [...new Set(keywords)];
+      descriptions.push(uniqueKeywords.join(" "));
+    }
   }
 
-  console.log("Loading embedding model...");
-  const extractor = await pipeline(
-    "feature-extraction",
-    "Xenova/all-MiniLM-L6-v2",
-    { dtype: "q8" },
+  console.log(
+    `Using Emojipedia descriptions for ${emojipediaHits}/${emojis.length} emojis`,
   );
 
-  console.log("Computing embeddings...");
-  const batchSize = 64;
+  console.log("Computing embeddings with @ternlight/base...");
   const allEmbeddings: Float32Array[] = [];
 
-  for (let i = 0; i < descriptions.length; i += batchSize) {
-    const batch = descriptions.slice(i, i + batchSize);
-    const output = await extractor(batch, { pooling: "mean", normalize: true });
-    const data = output.tolist() as number[][];
+  for (let i = 0; i < descriptions.length; i++) {
+    allEmbeddings.push(embed(descriptions[i]));
 
-    for (const emb of data) {
-      allEmbeddings.push(new Float32Array(emb));
+    const progress = i + 1;
+    if (progress % 100 === 0 || progress === descriptions.length) {
+      console.log(`  ${progress}/${descriptions.length} embeddings computed`);
     }
-
-    const progress = Math.min(i + batchSize, descriptions.length);
-    console.log(`  ${progress}/${descriptions.length} embeddings computed`);
   }
 
   console.log("Quantizing embeddings to int8 (symmetric)...");
