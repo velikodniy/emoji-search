@@ -1,6 +1,9 @@
 {
   "tasks": {
-    "build-db": "deno run -A scripts/build-emoji-db.ts",
+    "generate-db": "deno run -A scripts/build-emoji-db.ts",
+    "evaluate": "deno run -A scripts/evaluate-search.ts",
+    "score-db": "deno run -A scripts/evaluate-search.ts --minMRR=0.9 --minNDCG=0.8 --minHit=0.95",
+    "build-db": "deno task generate-db && deno task score-db",
     "dev": "deno run -A npm:@rsbuild/core/rsbuild dev",
     "build": "deno task build-db && deno run -A npm:@rsbuild/core/rsbuild build",
     "preview": "deno run -A npm:@rsbuild/core/rsbuild preview"
