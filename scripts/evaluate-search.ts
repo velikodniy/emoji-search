@@ -154,8 +154,8 @@ function validateEvalQueries(db: EmojiDB, queries: EvalQuery[]): void {
   }
 
   if (unknown.length > 0) {
-    console.warn(
-      `Warning: ${unknown.length} rated emojis are not present in the DB: ${
+    throw new Error(
+      `${unknown.length} rated emojis are not present in the DB: ${
         unknown.join(", ")
       }`,
     );
@@ -217,6 +217,7 @@ async function main() {
   const ndcg = mean(metrics.map((m) => m.ndcg));
   const hit = mean(metrics.map((m) => m.hit));
 
+  console.log("Purpose: regression guardrail, not an unbiased benchmark");
   console.log(`Evaluation file: ${evalPath}`);
   console.log(`Queries: ${metrics.length}`);
   console.log(`Top K: ${topK}`);

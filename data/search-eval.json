@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "description": "Starter graded relevance set for emoji search evaluation. Grades: 3 = excellent, 2 = good, 1 = acceptable.",
+  "description": "Regression guardrail for emoji search quality. Not an unbiased benchmark. Grades: 3 = excellent, 2 = good, 1 = acceptable.",
   "queries": [
     {
       "query": "cat",

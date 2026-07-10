@@ -8,6 +8,11 @@
     "build": "deno task build-db && deno run -A npm:@rsbuild/core/rsbuild build",
     "preview": "deno run -A npm:@rsbuild/core/rsbuild preview"
   },
+  "deploy": {
+    "org": "vlcdn",
+    "app": "emoji-search",
+    "exclude": ["!dist"]
+  },
   "nodeModulesDir": "auto",
   "imports": {
     "svelte": "npm:svelte@^5.0.0",
