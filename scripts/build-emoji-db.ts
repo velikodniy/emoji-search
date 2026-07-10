@@ -9,7 +9,8 @@ import type { EmojiDB } from "../src/lib/emoji-db-types.ts";
 // @ts-ignore: Import attribute for JSON
 import emojiData from "emoji-datasource/emoji.json" with { type: "json" };
 
-const OUTPUT_PATH = "./public/emoji-db.cbor";
+const OUTPUT_DIR = "./public";
+const OUTPUT_PATH = `${OUTPUT_DIR}/emoji-db.cbor`;
 const EMOJIPEDIA_PATH = "./data/emojipedia.json";
 const CUSTOM_ALIASES_PATH = "./data/custom-emoji-aliases.json";
 const DB_SCHEMA_VERSION = 2;
@@ -261,6 +262,7 @@ async function main() {
   console.log("Encoding to CBOR...");
   const encoded = encode(db);
 
+  await Deno.mkdir(OUTPUT_DIR, { recursive: true });
   await Deno.writeFile(OUTPUT_PATH, encoded);
 
   const sizeMB = (encoded.length / 1024 / 1024).toFixed(2);
